@@ -1,0 +1,223 @@
+---
+title: "Understanding Factors that Influence Diabetes in Adult Female Pima Indians"
+author: 'Aditya Pendyala'
+date: "2023-11-09"
+output: 
+  pdf_document:
+      fig_width: 8.3  
+      fig_height: 11.7  
+---
+# Introduction:
+This dataset "diabetes" has data from a study conducted by The National Institute of Diabetes and Digestive and Kidney Diseases, on 768 adult female Pima Indians living near Phoenix. The purpose of the study was to investigate factors related to diabetes.\ The dataset has 9 variables:\
+1. pregnant: number of times pregnant\
+2. glucose: plasma glucose concentration at 2 hours in an oral glucose tolerance\
+test
+3. diastolic: diastolic blood pressure (mm Hg)\
+4. triceps: triceps skin fold thickness (mm)\
+5. insulin: 2-Hour serum insulin (mu U/ml)\
+6. bmi: body mass index (weight in kg/(height in meters squared))\
+7. diabetes: diabetes pedigree function\
+8. age: age (years)\
+9. test: test whether the patient shows signs of diabetes (coded 0 if negative, 1 if positive)\
+
+# Purpose:
+The goal of this project is to try and find variables that influence DPF(Diabetes Pedigree Function) in adult female Pima Indians. Furthermore, to formulate a prediction model, that predicts the DPF(Diabetes Pedigree Function) in an adult female Pima Indian.\ 
+
+```{r setup, include=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+```{r, echo=FALSE}
+load("data1.RData")
+```
+```{r, message = FALSE}
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(ggplot2)
+source("regression_gprior.R")
+```
+
+# Exploring the dataset:
+We start by creating two data-sets for dependent variables and independent variable(DPF). We aim to find a prediction model for DPF which is the "diabetes" variable.\  
+
+```{r, echo=FALSE}
+#head(diabetes)
+df_1 <- diabetes %>%
+  select(pregnant,glucose,diastolic,triceps,insulin,bmi,age)
+
+y <- diabetes %>%
+  select(diabetes)
+```
+
+Here the "diabetes" variable is the value from the Diabetes Pedigree Function (DPF), which calculates diabetes likelihood depending on the subject's age and his/her diabetic family history.\
+First step in analyzing the dataset is to find the correlation of the factors. By doing this we can get a better understanding of which variables can be the possible factors of predicting DPF.\
+
+```{r, echo=FALSE}
+#Initial correlation matrix of the factors in the dataset
+cor_matrix <- cor(diabetes)
+
+# Melt the correlation matrix for use in ggplot
+cor_melted <- melt(cor_matrix)
+
+# Create a heatmap with correlation values using ggplot2
+ggplot(cor_melted, aes(Var1, Var2, fill = value, label = sprintf("%.2f", value))) +
+  geom_tile(color = "white") +
+  geom_text(size = 3, color = "black") +  # Add correlation values without a threshold condition
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0, limit = c(-1, 1),
+                       space = "Lab", name = "Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom") +
+  labs(title = "Correlation Heatmap for Diabetes factors",
+       x = "Factors",
+       y = "Factors")
+
+```
+
+Looking at the heat map, we can see that 'diabetes' variable has some correlation with 'glucose', 'triceps', 'insulin', and 'bmi'. These are some variables that we can look out for while creating a prediction model for DPF.\
+
+# Prediction and analysis:
+To continue with predictions and analysis, we standardize the data before regression and create new variables which are products of each variable with one another. We also include squares of each variable.\
+
+```{r}
+# Function to create new columns by multiplying each column with every other column
+create_product_columns <- function(df) {
+  col_names <- colnames(df)
+  new_df <- df
+  
+  for (i in 1:(length(col_names) - 1)) {
+    for (j in (i + 1):length(col_names)) {
+      new_col_name <- paste0(col_names[i], '&',col_names[j])
+      new_df <- mutate(new_df, !!new_col_name := df[[i]] * df[[j]])
+    }
+  }
+  
+  for (i in 1:(length(col_names) - 1)) {
+    new_col_name <- paste0(col_names[i], '&',col_names[i])
+    new_df <- mutate(new_df, !!new_col_name := df[[i]] * df[[i]])
+  }
+  return(new_df)
+}
+
+# Create the new data frame
+standardized_data_X <- as.data.frame(scale(create_product_columns(df_1)))
+standardized_data_Y <- as.data.frame(scale(y))
+```
+
+After creating the new data, we continue by standardizing the data and continue by splitting the standardized data into testing and training data-sets(30-70 ratio).\
+
+```{r}
+set.seed(1)
+combined_standardized_data <- cbind(standardized_data_X, standardized_data_Y)
+
+sample_ <- sample(c(TRUE, FALSE), nrow(combined_standardized_data), replace=TRUE, prob=c(0.7,0.3))
+combined_standardized_data_train <- combined_standardized_data[sample_, ]
+combined_standardized_data_test <- combined_standardized_data[!sample_, ] 
+
+standardized_data_X_train  <- combined_standardized_data_train %>%
+  select(-diabetes)
+standardized_data_X_test   <- combined_standardized_data_test %>%
+  select(-diabetes)
+standardized_data_Y_train  <- combined_standardized_data_train %>%
+  select(diabetes)
+standardized_data_Y_test   <- combined_standardized_data_test %>%
+  select(diabetes)
+
+standardized_data_X_train <- data.matrix(standardized_data_X_train)
+standardized_data_X_test <- data.matrix(standardized_data_X_test)
+standardized_data_Y_train <- data.matrix(standardized_data_Y_train)
+standardized_data_Y_test <- data.matrix(standardized_data_Y_test)
+```
+
+First prediction model that we consider is, OLS. We perform OLS for DPF vs all the dependent variables.\
+We now plot y-test and estimated-y-test. We are also plotting the predictor index for variables.\
+
+```{r}
+olsfit <- lm(standardized_data_Y_train ~ -1 + standardized_data_X_train)
+standardized_data_Y_test.ols <- standardized_data_X_test %*% olsfit$coefficients
+```
+
+```{r}
+squared_diff <- (standardized_data_Y_test - standardized_data_Y_test.ols)^2
+
+point_colors <- ifelse(squared_diff < median(squared_diff), "blue", "green")
+
+par(mfrow = c(1, 2), mar = c(2.75, 2.75, 1.5, 1.5), mgp = c(1.5, 0.5, 0))
+plot(standardized_data_Y_test, standardized_data_Y_test.ols,
+     xlab = expression(italic(y)[test]), ylab = expression(hat(italic(y))[test]),
+     col = point_colors)
+abline(0, 1, col = "red")
+
+plot(olsfit$coefficients, type = "h", lwd = 2, xlab = "predictor index",
+     ylab = expression(hat(beta)[ols]), col = point_colors)
+
+```
+Looking at the 2nd plot, it's visible that many variables may not be truly associated with DPF.\
+So, to remove variables that aren't helpful for the plot, we perform a backward elimination procedure.\
+
+```{r}
+source("backselect.R")
+vars <- bselect.tcrit(standardized_data_Y_train, standardized_data_X_train, tcrit = 1.959)
+bslfit <- lm(standardized_data_Y_train ~ -1 + standardized_data_X_train[, vars$remain])
+
+y.te.bsl <- standardized_data_X_test[, vars$remain] %*% bslfit$coef
+
+par(mfrow = c(1,2), mar = c(2.75,2.75,1.5,1.5), mgp = c(1.5,0.5,0))
+plot(standardized_data_Y_test, standardized_data_Y_test.ols, xlab = expression(italic(y)[test]), ylab = expression(hat(italic(y))[test]))
+abline(0, 1, col = "red")
+plot(standardized_data_Y_test, y.te.bsl, xlab = expression(italic(y)[test]), ylab = expression(hat(italic(y))[bsl]))
+abline(0, 1, col = "red")
+
+
+
+cat("MSE for OLS:", mean((standardized_data_Y_test - standardized_data_Y_test.ols)^2), "\n")
+cat("MSE for backward elimination model:",mean((standardized_data_Y_test - y.te.bsl)^2), "\n")
+cat("Number of Variables that remain after backward elimination process:", length(vars$remain), "\n")
+cat("Number of Variables that remain after backward elimination process:", length(vars$removed), "\n")
+```
+Looking at the results we can see that the mean square error for the OLS with all the variables is 0.92. After backward elimination, the mean square error is 0.87. This shows that the regression model's prediction performance has improved.\
+
+The variables that remain after the backward elimination process are:\
+
+```{r}
+for (val in vars$remain) {
+  cat(colnames(standardized_data_X[val]),"\n")
+}
+```
+Now we consider a different prediction model, Bayesian Model Selection.\
+We are performing Bayesian Model Selection that finds the average beta regression variables. We perform this selection on the training data first and then predict values using the testing data. We are using regression_gprior.R file that contains the necessary functions to perform a Bayesian Model Selection using a g-prior.\
+
+```{r}
+X <- standardized_data_X_train
+y <- standardized_data_Y_train
+S <- 1000
+BETA <- Z <- matrix(NA, S, dim(standardized_data_X_train)[2])
+z <- rep(1, dim(standardized_data_X_train)[2])
+lpy.c <- lpy.X(y, standardized_data_X_train[, z == 1, drop = FALSE])
+
+for(s in 1 : S){
+  for(j in sample(1 : dim(standardized_data_X_train)[2])){
+   zp <- z; zp[j] <- 1 - zp[j];
+   lpy.p <- lpy.X(y, X[, zp == 1, drop = FALSE])
+   r <- (lpy.p - lpy.c) * (-1) ^ (zp[j] == 0)
+   z[j] <- rbinom(1,1,1 / (1 + exp(-r)))
+   if(z[j] == zp[j]) {lpy.c <- lpy.p}
+  }
+  beta <- z
+  if(sum(z) > 0) {beta[z == 1] <- lm.gprior(y, standardized_data_X_train[, z == 1, drop = FALSE], S = 1)$beta}
+  Z[s, ] <- z
+  BETA[s, ] <- beta
+  }
+```
+
+
+
+```{r}
+avg_values <- colMeans(BETA, na.rm = TRUE)
+new_matrix <- ifelse(avg_values > 0.5, avg_values, 0)
+print(new_matrix)
+```
+Looking at the average BETA values, we can see that none of the variables have a posterior probability greater than 0.5. This means that the Bayesian Model Selection doesn't select any variables. One of the reasons for this could be the very low correlation values of the variables.
+
+# Conclusion:
+After comparing the different models, we can see that the backward elimination process helped develop the best performing prediction model. This prediction model uses "insulin", "bmi", "age", "glucose&bmi", "glucose&age", "triceps&bmi", "insulin&bmi", "insulin&age", "bmi&bmi" as it's predictor variables. These variables have a high influence on DPF, which helps determine the likelihood of diabetes in adult female Pima Indians. These findings are in-tune with other studies that mention most of these variables as factors for DPF.

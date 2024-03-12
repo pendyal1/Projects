@@ -1,0 +1,278 @@
+---
+title: "Formulating a Prediction Model to Determine Outcome of a Tumor in Breast Cancer Patients"
+author: "Aditya Pendyala"
+date: "2023-12-10"
+output: 
+  pdf_document:
+    fig_width: 8.3  
+    fig_height: 11.7 
+---
+# Introduction:
+This dataset "cancer" has data from a study of breast cancer in Wisconsin. The purpose of the study was to determine whether a new procedure called fine needle aspiration which draws only a small sample of tissue could be effective in determining tumor status.\
+The data has 10 variables which also consists of a Bernoulli variable "Class" which is the tumor status. The variables are:\
+
+1. Class: 0 if malignant, 1 if benign\ 
+2. Adhes: marginal adhesion\
+3. BNucl: bare nuclei\
+4. Chrom: bland chromatin\
+5. Epith: epithelial cell size\
+6. Mitos: mitoses\
+7. NNucl: normal nucleoli\
+8. Thick: clump thickness\
+9. UShap: cell shape uniformity\
+10. USize: cell size uniformity\
+
+# Purpose:
+The goal of this project is to formulate a prediction model, that predicts the outcome of a tumor in breast cancer patients. This project aims to compare different approaches to devising a prediction model.\ 
+
+```{r setup, include=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.show='hold')
+load("/Users/adi/Documents/STT465/Final Project 2/data3.RData")
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(bestglm)
+library(caret)
+library(gridExtra)
+library(lmtest)
+library(cowplot)
+library(BAS)
+```
+
+# Exploring the dataset:
+First step in analyzing the dataset is to find the correlation of the factors. By doing this we can get a better understanding of which variables can be the possible factors for determining the Class.\
+
+```{r}
+#Initial correlation matrix of the factors in the dataset
+cor_matrix <- cor(cancer)
+
+# Melt the correlation matrix for use in ggplot
+cor_melted <- melt(cor_matrix)
+
+# Create a heatmap with correlation values using ggplot2
+ggplot(cor_melted, aes(Var1, Var2, fill = value, label = sprintf("%.2f", value))) +
+  geom_tile(color = "white") +
+  geom_text(size = 3, color = "black") +  # Add correlation values without a threshold condition
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0, limit = c(-1, 1),
+                       space = "Lab", name = "Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom") +
+  labs(title = "Correlation Heatmap for Cancer factors",
+       x = "Factors",
+       y = "Factors")
+```
+Looking at the heat map, we can see that most of the variables associated with Class have large negative correlations. Thus, we can expect the prediction model to have most of the variables.\
+
+Now we are creating box plots and scatter plots to understand each factor's relationship with Class.\
+
+```{r}
+continuous_vars <- c("BNucl", "Chrom", "UShap", "USize")
+
+# Create an empty list to store plots
+plot_list <- list()
+
+# Loop through each continuous variable and create box plots and scatter plots
+for (var in continuous_vars) {
+  box_plot <- ggplot(cancer, aes(x = factor(Class, labels = c("Malignant", "Benign")), y = get(var))) +
+    geom_boxplot() +
+    labs(title = paste("Box plot of", var, "by Class"),
+         x = "Class", y = var) +
+    coord_cartesian(ylim = c(0, 12))  
+  
+  scatter_plot <- ggplot(cancer, aes(x = get(var), y = as.numeric(Class), color = factor(Class))) +
+    geom_point(size = 0.5, position = position_jitter(width = 0.1), alpha = 0.5) +
+    labs(title = paste("Scatter plot of", var, "by Class"),
+         x = var, y = "Class") +
+    coord_cartesian(xlim = c(0, 12)) +  
+    scale_color_manual(values = c("0" = "blue", "1" = "red")) + 
+    theme(legend.position = "none")  
+  
+  # Append box plot and scatter plot to the list
+  plot_list[[length(plot_list) + 1]] <- box_plot
+  plot_list[[length(plot_list) + 1]] <- scatter_plot
+}
+
+# Arrange and print the plots vertically
+combined_plots <- cowplot::plot_grid(plotlist = plot_list, ncol = 2, align = 'v')
+print(combined_plots)
+
+
+```
+Looking at the correlation matrix and the plots, we can see that many variables have good correlation to the "Class" variable. This means that we can expect our ideal prediction model to include many of these terms.\
+
+```{r}
+set.seed(123)
+train_index <- createDataPartition(cancer$Class, p = 0.7, list = FALSE)
+
+cancer_train <- cancer[train_index, ]
+cancer_test <- cancer[-train_index, ]
+```
+# Prediction and analysis:
+In order to devise the best fitting prediction model, we can find and compare different models. We can choose MSE values as a factor for comparison. We find the prediction model by first using a training dataset, to train the model. Later we fit the prediction model on the testing data to check the accuracy of the model.\
+
+1. Finding a prediction model using basic glm.\
+We formulate a basic model that considers all the variables as prediction variables.\
+```{r}
+obj_basic <- glm(Class ~ Adhes + BNucl + Chrom + Epith + Mitos+ NNucl + Thick + UShap + USize, family = 'binomial' , data = cancer_train)
+cat("Coefficients: ", "\n")
+obj_basic$coefficients
+```
+```{r}
+prediction_basic <- predict(obj_basic, newdata = cancer_test, type = "response")
+cat("MSE:",mean((cancer_test$Class - prediction_basic)^2),"\n")
+
+```
+We can see that the mean standard error of the model is 0.025. Though this is a small value, there's a possibility of over fitting. Over fitting can cause bad prediction results when applied to new data.\
+
+2. Finding a prediction model using AIC.\
+Since the variable we are trying to predict is Bernoulli, we can perform a logistic regression. One model selection criterion for logistic regression is AIC(Akaike Information Criterion). AIC measures the closeness of the candidate model to the true one.\
+```{r}
+fit_aic <- bestglm(cancer_train[,c('Adhes','BNucl' , 'Chrom', 'Epith', 'Mitos', 'NNucl' ,'Thick' , 'UShap' , 'USize', 'Class')], IC = "AIC", family = binomial)
+cat("Coefficients: ", "\n")
+fit_aic$BestModel$coeff
+```
+```{r}
+prediction_AIC <- predict(fit_aic$BestModel, newdata = cancer_test, type = "response")
+cat("MSE:",mean((cancer_test$Class - prediction_AIC)^2),"\n")
+```
+We can see that the mean standard error of the model is 0.024. This is slightly larger than the basic glm. But, unlike the regular model we can see that this model only considers "Adhes", "BNucl", "Chrom", "Mitos", "NNucl", "Thick" as prediction variables. This is fewer than the basic model.\
+
+3. Finding a prediction model using BIC glm.\
+Another model selection criterion for logistic regression is BIC(Bayesian information criterion). IC (with negative sign) measures how likely the candidate model is
+the true model from Bayesian perspective.\
+```{r}
+fit_bic <- bestglm(cancer_train[,c('Adhes','BNucl' , 'Chrom', 'Epith', 'Mitos', 'NNucl' ,'Thick' , 'UShap' , 'USize', 'Class')], IC = "BIC", family = binomial)
+cat("Coefficients: ", "\n")
+fit_bic$BestModel$coeff
+```
+```{r}
+prediction_BIC <- predict(fit_bic$BestModel, newdata = cancer_test, type = "response")
+cat("MSE:",mean((cancer_test$Class - prediction_BIC)^2),"\n")
+
+```
+We can see that the mean standard error of the model is 0.027. This is slightly larger than the AIC model. This model selected "BNucl", "Chrom", "Mitos", "NNucl", "Thick" as prediction variables. This is fewer than AIC.\
+
+
+4. Performing Bayesian Model Selection.\
+
+Since this is a logistic regression, another way of finding a prediction model is by performing a Bayesian Model Selection. We use MCMC sampling to find Beta values that are used to find the predicted y values.\ 
+
+```{r}
+library(mvtnorm)
+y <- cancer_train$Class
+X <- cbind(rep(1, length(y)), as.matrix(cancer_train[, c('Adhes','BNucl' , 'Chrom', 'Epith', 'Mitos', 'NNucl' ,'Thick' , 'UShap' , 'USize')]))
+n <- length(y) ; p <- dim(X)[2]
+
+mu0 <- rep(0,p); sigma0 <- 100 * diag(1,p)
+var.prop <- 0.5 * solve(t(X) %*% X) ; sw <- 0.2
+
+S <- 20000
+b <- rep(0,p)
+z <- rep(1,dim(X)[2] - 1)
+B <- matrix(0, nrow = S, ncol = p)
+Z <- matrix(0, nrow = S, ncol = p -1)
+acp_z <- acp_b <- 0
+
+for(s in 1:S){
+  
+  z.p <- z + (1  - 2 * z) * rbinom(dim(X)[2] - 1, size = 1, prob = sw)
+  b.p <- b
+  beta.p <- c(b.p[1], z.p * b.p[-1])
+  beta <- c(b[1], z * b[-1])
+  
+  log.r <- sum(dbinom(y, size = 1, prob = 1 / (1 + exp(-X %*% beta.p)), log = T)) - sum(dbinom(y, size = 1, prob = 1 / (1 + exp(-X %*% beta )), log = T))
+  
+  if(log(runif(1)) <= log.r) {z <- z.p; acp_z <- acp_z + 1 }
+  b.p <- as.vector(rmvnorm(1,b,var.prop))
+  z.p <- z
+  beta.p <- c(b.p[1], z.p * b.p[-1])
+  beta <- c(b[1], z * b[-1])
+  
+  log.r <- sum(dbinom(y, size = 1, prob = 1 / (1 + exp(-X %*% beta.p)), log = T)) -
+    sum(dbinom(y, size = 1, prob = 1 / (1 + exp(-X %*% beta )), log = T)) + 
+    dmvnorm(b.p, mu0, sigma0, log = T) - dmvnorm(b, mu0, sigma0, log = T)
+  
+  if(log(runif(1)) <= log.r) {b <- b.p; acp_b <- acp_b + 1}
+  
+  B[s, ] <- b
+  Z[s, ] <- z
+  
+}
+
+```
+We use B and Z from the MCMC algorithm to find Beta, and then use Beta to predict values for Class. We also applied a threshold of 0.5 to select our variables.\
+
+```{r}
+X_test <- cbind(rep(1, length(cancer_test$Class)), as.matrix(cancer_test[, c('Adhes','BNucl' , 'Chrom', 'Epith', 'Mitos', 'NNucl' ,'Thick' , 'UShap' , 'USize')]))
+
+n_test <- nrow(X_test)
+
+predicted_probs_test <- matrix(0, nrow = S, ncol = n_test)
+
+for (s in 1:S) {
+  beta <- c(B[s, 1], Z[s, ] * B[s, -1])
+  predicted_probs_test[s, ] <- 1 / (1 + exp(-X_test %*% beta))
+}
+mean_predicted_probs_test <- colMeans(predicted_probs_test)
+
+predicted_y_test <- ifelse(mean_predicted_probs_test > 0.5, 1, 0)
+
+```
+```{r}
+cat("MSE:",mean((mean_predicted_probs_test - cancer_test$Class)^2),"\n")
+```
+We can see that the MSE for Bayesian Model Selection is 0.022 which is better than all the other models we found.\
+
+
+Looking at the different MSE values, we can see that for the Bayesian Model Selection we have the lowest Mean Squared Error. This is an indicator of a good prediction model. The comparison of the MSE values with other models, is consistent with statistical findings. Usually, BIC can fit worse than AIC models, and the same can be observed with this data.\
+
+```{r}
+prediction_data_model1 <- data.frame(OriginalClass = cancer_test$Class, PredictedProb = prediction_BIC)
+prediction_data_model2 <- data.frame(OriginalClass = cancer_test$Class, PredictedProb = prediction_AIC)
+
+prediction_data_model1$Error <- prediction_data_model1$PredictedProb - prediction_data_model1$OriginalClass
+prediction_data_model2$Error <- prediction_data_model2$PredictedProb - prediction_data_model2$OriginalClass
+
+
+x_index <- seq_along(cancer_test$Class)
+
+plot(x_index, prediction_data_model1$Error, type = "o", col = "blue",
+     xlab = "Observation Index", ylab = "Prediction Error",
+     main = "Comparison of Prediction Errors for AIC and BIC")
+
+points(x_index, prediction_data_model2$Error, type = "o", col = "red")
+
+abline(h = 0, col = "black", lty = 2)
+
+legend("topright", legend = c("BIC", "AIC"),
+       col = c("blue", "red"), pch = 1:1)
+
+```
+Looking at this plot, we can see that the BIC has a larger prediction error compared to AIC at many points in the graph. This shows that the AIC Model has a lower prediction error value.
+```{r}
+prediction_data_model1 <- data.frame(OriginalClass = cancer_test$Class, PredictedProb = prediction_basic)
+prediction_data_model2 <- data.frame(OriginalClass = cancer_test$Class, PredictedProb = mean_predicted_probs_test)
+
+prediction_data_model1$Error <- prediction_data_model1$PredictedProb - prediction_data_model1$OriginalClass
+prediction_data_model2$Error <- prediction_data_model2$PredictedProb - prediction_data_model2$OriginalClass
+
+
+x_index <- seq_along(cancer_test$Class)
+
+plot(x_index, prediction_data_model1$Error, type = "o", col = "blue",
+     xlab = "Observation Index", ylab = "Prediction Error",
+     main = "Comparison of Prediction Errors for Basic glm and Bayesian Model")
+
+points(x_index, prediction_data_model2$Error, type = "o", col = "red")
+
+abline(h = 0, col = "black", lty = 2)
+
+legend("topright", legend = c("Basic", "Bayesian Model"),
+       col = c("blue", "red"), pch = 1:1)
+
+```
+Looking at this plot, we can see that the Bayesian Model has a smaller prediction error compared to Basic in many points in the graph. This shows that the Bayesian Model has a lower prediction error value.
+
+# Conclusion:
+On comparison with different models, such as AIC, BIC, and glm it can be inferred that the Bayesian Model has a lower MSE prediction value and high accuracy, making it a suitable choice to predict the tumor status. These findings may change according to the choice of data split, and also the nature of the data. Furthermore, this project compares different models on the basis of MSE, which may not be the universal choice of comparison. Other factors of comparison may include computational power and memory. If the mentioned was the criteria, we can say that the Bayesian Model is memory and power heavy, making it an inefficient choice.

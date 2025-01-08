@@ -55,8 +55,8 @@ SnoringDetection/
 
 To get started, clone this repository to your local machine:
 
-git clone https://github.com/pendyal1/cmse492_project.git
-cd cmse492_project
+git clone https://github.com/pendyal1/Projects.git
+cd Projects/SnoringDetection
 
 ### 2. Installing dependencies
 The following Python libraries are required for this project:
